@@ -1,0 +1,2298 @@
+---
+title: "CODA"
+author: "Javier Ramos Munell"
+date: "2025-01-13"
+output: html_document
+---
+
+
+```{r}
+#####Library#####
+
+install.packages("installr")
+installr::updateR()
+install.packages("dplyr")
+install.packages("lmerTest", dependencies = TRUE)
+install.packages("rgl")
+require(compositions)
+require(robustbase)
+require(ggplot2)
+library(dplyr)
+require(dplyr)
+require(lme4)
+require(lmerTest)
+require(rgl)
+library(rgl)
+
+#Load to base data
+setwd("/Users/javierramosmunell/Desktop/CODA")
+data = read.csv("df2.csv")
+
+#look at the dataset 
+#top few rows
+head(data)
+
+#Create variables of ZBMI and Waist Circumference-to-Height Ratio (WHtR)
+mean_bmi <- mean(data$an_bmi, na.rm = TRUE)
+sd_bmi <- sd(data$an_bmi, na.rm = TRUE)
+data <- data %>%
+  mutate(ZBMI = (an_bmi - mean_bmi) / sd_bmi)
+data <- data %>%
+  mutate(WHtR = an_wc_mean / an_ht_bmi)
+
+# Calcula la función de distribución empírica (ecdf) para el BMI
+ecdf_bmi <- ecdf(data$an_bmi)
+
+# Calcula los percentiles 5, 85 y 95
+percentil_5 <- quantile(data$an_bmi, probs = 0.05, na.rm = TRUE)
+percentil_85 <- quantile(data$an_bmi, probs = 0.85, na.rm = TRUE)
+percentil_95 <- quantile(data$an_bmi, probs = 0.95, na.rm = TRUE)
+
+# Clasifica a los niños según los percentiles (0=bajo peso; 1=Peso saludable; 2=sobrepeso; 3=Obesidad)
+data$OWOb <- case_when(
+  is.na(data$an_bmi) ~ NA_character_,  # Si hay valores faltantes en an_bmi, asigna NA a owob
+  data$an_bmi < percentil_5 ~ "0",
+  between(data$an_bmi, percentil_5, percentil_85) ~ "1",
+  between(data$an_bmi, percentil_85, percentil_95) ~ "2",
+  data$an_bmi >= percentil_95 ~ "3",
+  TRUE ~ NA_character_
+)
+
+#Create of variables for using
+
+# Calculate means and s_tug
+data$s_tug <- rowMeans(data[, c("ms_stug_1st_timediff_sec", "ms_stug_2nd_timediff_sec")])
+
+# Show the resulting data set
+print(data)
+
+# Calculate means and standing long jump
+data$stand_long_jump <- rowMeans(data[, c("ms_standinglongjump_trial1", "ms_standinglongjump_trial2")])
+
+# Show the resulting data set
+print(data)
+
+# Calculate means and Handgrip
+data$handgrip_left <- rowMeans(data[, c("ms_force_left_hand_trial1", "ms_force_left_hand_trial2")])
+data$handgrip_right <- rowMeans(data[, c("ms_force_right_hand_trial1", "ms_force_right_hand_trial2")])
+
+# Calculate balance means 
+data$balance_mean <- rowMeans(data[, c("ms_balance_left_timediff_sec", "ms_balance_right_timediff_sec")])
+data$handgrip_mean <- rowMeans(data[, c("handgrip_left", "handgrip_right")])
+
+
+# Show the resulting data set
+print(data)
+
+setwd("/Users/javierramosmunell/Desktop/CODA")
+data1 = read.csv("mrant1.csv")
+
+setwd("/Users/javierramosmunell/Desktop/CODA")
+data2 = read.csv("gonogo1.csv")
+
+data1_selected <- data1 %>%
+  dplyr::select(subject_id, MrAnt_Pt,clasif_mrant)%>%
+  transmute(cf_child = subject_id,
+            MrAnt_Pt = MrAnt_Pt,
+            clasif_mrant = clasif_mrant)->data1
+
+data2_selected <- data2 %>%
+  dplyr::select(subject_id, ImpulseControl,clasif_gonogo)%>%
+  transmute(cf_child = subject_id,
+            ImpulseControl = ImpulseControl,
+            clasif_gonogo = clasif_gonogo)->data2
+
+df_resultado <- merge(merge(data, data1, by = "cf_child", all = TRUE), data2, by = "cf_child", all = TRUE)
+
+df_id <- df_resultado %>%
+  filter(cf_child %in% data$cf_child) %>%
+  distinct(cf_child, .keep_all = TRUE)
+
+#####VARIABLES #####
+#select the variables that we might want (we will rename some of the complex names during the selection process)
+d1 = df_id %>% dplyr::select (school = cf_centre_id, 
+                             SEX = dg_child_sex, 
+                             AGE = dg_child_age_calc_years, 
+                             SES = dg_sector, 
+                             Height = an_ht_bmi, 
+                             Weight = an_wt_bmi, 
+                             BMI = an_bmi, 
+                             ZBMI = ZBMI, 
+                             owob = OWOb, 
+                             Waist = an_wc_mean, 
+                             WHT = WHtR, 
+                             SB = SB_min, 
+                             LPA = LPA_min, 
+                             MVPA = MVPA_min, 
+                             Sleep = total_sleep_24hr,
+                             Shuttles = ms_shuttlerun,
+                             s_tug = s_tug,
+                             balance_left = ms_balance_left_timediff_sec,
+                             balance_right = ms_balance_right_timediff_sec,
+                             stand_long_jump = stand_long_jump,
+                             handgrip_left = handgrip_left,
+                             handgrip_right = handgrip_right,
+                             nine_hole_left = ms_9hole_left_timediff_sec,
+                             nine_hole_right = ms_9hole_right_timediff_sec,
+                             MrAnt_Pt = MrAnt_Pt,
+                             clasif_mrant = clasif_mrant,
+                             ImpulseControl = ImpulseControl,
+                             clasif_gonogo = clasif_gonogo,
+                             Balance_mean= balance_mean,
+                             Handgrip_mean= handgrip_mean
+                             )
+
+head(d1)
+
+# modification of variable z-BMI considering the under-and-up classification
+d1 <- d1 %>%
+  mutate(owob = case_when(
+    AGE <= 5 & ZBMI < -3 ~ "Severamente desnutrido",
+    AGE <= 5 & ZBMI < -2 ~ "Peso insuficiente",
+    AGE <= 5 & ZBMI < 1 ~ "Normopeso",
+    AGE <= 5 & ZBMI < 2 ~ "Riesgo_sob",
+    AGE <= 5 & ZBMI < 3 ~ "Sobrepeso",
+    AGE <= 5 & ZBMI > 3 ~ "Obesidad",
+    AGE > 5 & ZBMI < -2 ~ "Peso insuficiente",
+    AGE > 5 & ZBMI < 1 ~ "Normopeso",
+    AGE > 5 & ZBMI < 2 ~ "Sobrepeso",
+    AGE > 5 & ZBMI > 2 ~ "Obesidad"
+  ),
+  owob_num = case_when(
+    owob == "Severamente desnutrido" ~ -3,
+    owob == "Peso insuficiente" ~ -2,
+    owob == "Normopeso" ~ 1,
+    owob == "Riesgo_sob" ~ 2,
+    owob == "Sobrepeso" ~ 3,
+    owob == "Obesidad" ~ 4
+  ),
+  SEX = factor(SEX))
+
+
+
+#see what sort of variables R thinks these are 
+str(d1)
+
+#will need to change some of these variables to factors. 
+d1$school = factor(d1$school) 
+d1$sex = factor(d1$SEX) 
+d1$owob = factor(d1$owob)
+
+#compositional variables 
+d1$comp = d1 %>% select( SB, LPA, MVPA, Sleep) 
+head(d1$comp)
+
+#are there any zeros? 
+missingSummary(d1$comp)
+
+#Make ilrs - use default ilr transformation as we are not going to interpret individual regression coefficients. 
+d1$ilrs = ilr(d1$comp)
+
+#will save them as separate variables rather than a set of ilrs (helps with prediction later)
+d1$ilr1 = d1$ilrs[,1] 
+d1$ilr2 = d1$ilrs[,2] 
+d1$ilr3 = d1$ilrs[,3]
+
+# Create a dataframe with the new ILR variables
+ilr_data <- data.frame(
+  id = d1$id,          # Assuming that 'id' is a unique identifier for each participant
+  ilr1 = d1$ilr1,
+  ilr2 = d1$ilr2,
+  ilr3 = d1$ilr3
+)
+ilr_data <- cbind(d1$id, d1$ilr1, d1$ilr2, d1$ilr3)
+
+# Shows the resulting dataframe
+print(ilr_data)
+```
+
+```{r}
+###### MODEL ######
+#######now that data is set up, start making the analytical models. 
+#Research Q - what time-use compositions are associated with the best fitness (highest number of shuttles) and fatness (lowest WHT, or we could use a target WHT ratio) 
+#the first step is to get the best fitting models - I'm using sample specific z-scores for the outcomes (scale()) to make interpretation easier
+######WHT#####
+mod.WHT = lmer(scale(log(WHT)) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1)
+summary(mod.WHT)
+hist(residuals(mod.WHT))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.WHT, test.statistic= "F")
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+
+mod.WHT2 = lmer(scale(log(WHT)) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+anova(mod.WHT, mod.WHT2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+#install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.WHT <- as.data.frame(griddata)
+
+# predictions for mod.fat
+predboys <- predict(mod.WHT, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.WHT, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.WHT=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.WHT1 <- data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.WHT)
+
+#extract the compositiona associated with the lowest **10**% of predicted bmi
+best.WHT <- df.WHT1%>% top_frac(.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b = mean(acomp(best.WHT[,1:4])))
+
+#put activity variables in minutes/day
+df.WHT1$Sleep=df.WHT1$Sleep*1440
+df.WHT1$SB=df.WHT1$SB*1440
+df.WHT1$LPA=df.WHT1$LPA*1440
+df.WHT1$MVPA=df.WHT1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.WHT[,1])) 
+range.best.sb=range(as.data.frame(best.WHT[,2])) 
+range.best.lpa=range(as.data.frame(best.WHT[,3])) 
+range.best.mvpa=range(as.data.frame(best.WHT[,4]))
+
+######Shuttle#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.shuttle = lmer(scale(Shuttles) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.shuttle)
+hist(residuals(mod.shuttle))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.shuttle, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.shuttle2 = lmer(scale(Shuttles) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.shuttle, mod.shuttle2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+#install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+df.shuttle <- as.data.frame(griddata)
+
+predboys <- predict(mod.shuttle, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.shuttle, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("2", nrow(griddata))),
+                    re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.shuttle=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.shuttle1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.shuttle)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.shuttle=df.shuttle1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.shuttle[,1:4])))
+
+#put activity variables in minutes/day 
+df.shuttle1$Sleep=df.shuttle1$Sleep*1440 
+df.shuttle1$SB=df.shuttle1$SB*1440 
+df.shuttle1$LPA=df.shuttle1$LPA*1440 
+df.shuttle1$MVPA=df.shuttle1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.shuttle[,1])) 
+range.best.sb=range(as.data.frame(best.shuttle[,2])) 
+range.best.lpa=range(as.data.frame(best.shuttle[,3])) 
+range.best.mvpa=range(as.data.frame(best.shuttle[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+shuttle.sum=round(sum.sl*1440)
+
+#in minutes
+shuttle.sum
+
+#in hours
+round(shuttle.sum/60, 1)
+
+
+######Standing long jump#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.standing = lmer(scale(stand_long_jump) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.standing)
+hist(residuals(mod.standing))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.standing, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.standing2 = lmer(scale(stand_long_jump) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.standing, mod.standing2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.standing <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.standing, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.standing, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.standing=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.standing1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.standing)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.standing=df.standing1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.standing[,1:4])))
+
+#put activity variables in minutes/day 
+df.standing1$Sleep=df.standing1$Sleep*1440 
+df.standing1$SB=df.standing1$SB*1440 
+df.standing1$LPA=df.standing1$LPA*1440 
+df.standing1$MVPA=df.standing1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.standing[,1])) 
+range.best.sb=range(as.data.frame(best.standing[,2])) 
+range.best.lpa=range(as.data.frame(best.standing[,3])) 
+range.best.mvpa=range(as.data.frame(best.standing[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+standing.sum=round(sum.sl*1440)
+
+#in minutes
+standing.sum
+
+#in hours
+round(standing.sum/60, 1)
+
+######S-tug#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.stug = lmer(scale(s_tug) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.stug)
+hist(residuals(mod.stug))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.stug, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.stug2 = lmer(scale(s_tug) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.stug, mod.stug2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.stug <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.stug2, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.stug2, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.stug=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.stug1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.stug)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.stug=df.stug1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.stug[,1:4])))
+
+#put activity variables in minutes/day 
+df.stug1$Sleep=df.stug1$Sleep*1440 
+df.stug1$SB=df.stug1$SB*1440 
+df.stug1$LPA=df.stug1$LPA*1440 
+df.stug1$MVPA=df.stug1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.stug[,1])) 
+range.best.sb=range(as.data.frame(best.stug[,2])) 
+range.best.lpa=range(as.data.frame(best.stug[,3])) 
+range.best.mvpa=range(as.data.frame(best.stug[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+stug.sum=round(sum.sl*1440)
+
+#in minutes
+stug.sum
+
+#in hours
+round(stug.sum/60, 1)
+
+######Balance_left#####
+
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.balance_left = lmer(scale(balance_left) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.balance_left)
+hist(residuals(mod.balance_left))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.balance_left, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.balance_left2 = lmer(scale(balance_left) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.balance_left, mod.balance_left2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.balance_left <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.balance_left, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.balance_left, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.balance_left=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.balance_left1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.balance_left)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.balance_left=df.balance_left1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.balance_left[,1:4])))
+
+#put activity variables in minutes/day 
+df.balance_left1$Sleep=df.balance_left1$Sleep*1440 
+df.balance_left1$SB=df.balance_left1$SB*1440 
+df.balance_left1$LPA=df.balance_left1$LPA*1440 
+df.balance_left1$MVPA=df.balance_left1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.balance_left[,1])) 
+range.best.sb=range(as.data.frame(best.balance_left[,2])) 
+range.best.lpa=range(as.data.frame(best.balance_left[,3])) 
+range.best.mvpa=range(as.data.frame(best.balance_left[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+balance_left.sum=round(sum.sl*1440)
+
+#in minutes
+balance_left.sum
+
+#in hours
+round(balance_left.sum/60, 1)
+
+######Balance_right#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.balance_right = lmer(scale(balance_right) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.balance_right)
+hist(residuals(mod.balance_right))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.balance_right, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.balance_right2 = lmer(scale(balance_right) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.balance_right, mod.balance_right2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.balance_right <- as.data.frame(griddata)
+
+# predictions for mod.fat
+predboys <- predict(mod.balance_right, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.balance_right, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.balance_right=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.balance_right1 <- data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.balance_right)
+
+#extract the compositiona associated with the lowest **10**% of predicted bmi
+best.balance_right <- df.balance_right1%>% top_frac(.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b = mean(acomp(best.balance_right[,1:4])))
+
+#put activity variables in minutes/day
+df.balance_right1$Sleep=df.balance_right1$Sleep*1440
+df.balance_right1$SB=df.balance_right1$SB*1440
+df.balance_right1$LPA=df.balance_right1$LPA*1440
+df.balance_right1$MVPA=df.balance_right1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.balance_right[,1])) 
+range.best.sb=range(as.data.frame(best.balance_right[,2])) 
+range.best.lpa=range(as.data.frame(best.balance_right[,3])) 
+range.best.mvpa=range(as.data.frame(best.balance_right[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+balance_right.sum=round(sum.sl*1440)
+
+#in minutes
+balance_right.sum
+
+#in hours
+round(balance_right.sum/60, 1)
+
+######Balance_mean#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.balance_mean = lmer(scale(Balance_mean) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.balance_mean)
+hist(residuals(mod.balance_mean))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.balance_mean, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.balance_mean2 = lmer(scale(Balance_mean) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.balance_mean, mod.balance_mean2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.balance_mean <- as.data.frame(griddata)
+
+# predictions for mod.fat
+predboys <- predict(mod.balance_mean, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.balance_mean, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.balance_mean=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.balance_mean1 <- data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.balance_mean)
+
+#extract the compositiona associated with the lowest **10**% of predicted bmi
+best.balance_mean <- df.balance_mean1%>% top_frac(.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b = mean(acomp(best.balance_mean[,1:4])))
+
+#put activity variables in minutes/day
+df.balance_mean1$Sleep=df.balance_mean1$Sleep*1440
+df.balance_mean1$SB=df.balance_mean1$SB*1440
+df.balance_mean1$LPA=df.balance_mean1$LPA*1440
+df.balance_mean1$MVPA=df.balance_mean1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.balance_mean[,1])) 
+range.best.sb=range(as.data.frame(best.balance_mean[,2])) 
+range.best.lpa=range(as.data.frame(best.balance_mean[,3])) 
+range.best.mvpa=range(as.data.frame(best.balance_mean[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+balance_mean.sum=round(sum.sl*1440)
+
+#in minutes
+balance_mean.sum
+
+#in hours
+round(balance_mean.sum/60, 1)
+
+######Handgrip_left#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.handgrip_left = lmer(scale(handgrip_left) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.handgrip_left)
+hist(residuals(mod.handgrip_left))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.handgrip_left, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.handgrip_left2 = lmer(scale(handgrip_left) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.handgrip_left, mod.handgrip_left2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.handgrip_left <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.handgrip_left, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.handgrip_left, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.handgrip_left=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.handgrip_left1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.handgrip_left)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.handgrip_left=df.handgrip_left1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.handgrip_left[,1:4])))
+
+#put activity variables in minutes/day 
+df.handgrip_left1$Sleep=df.handgrip_left1$Sleep*1440 
+df.handgrip_left1$SB=df.handgrip_left1$SB*1440 
+df.handgrip_left1$LPA=df.handgrip_left1$LPA*1440 
+df.handgrip_left1$MVPA=df.handgrip_left1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.handgrip_left[,1])) 
+range.best.sb=range(as.data.frame(best.handgrip_left[,2])) 
+range.best.lpa=range(as.data.frame(best.handgrip_left[,3])) 
+range.best.mvpa=range(as.data.frame(best.handgrip_left[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+handgrip_left.sum=round(sum.sl*1440)
+
+#in minutes
+handgrip_left.sum
+
+#in hours
+round(handgrip_left.sum/60, 1)
+
+######Handgrip_right#####
+#MODEL FOR FITNESS
+mod.handgrip_right = lmer(scale(log(handgrip_right)) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1)
+summary(mod.handgrip_right)
+hist(residuals(mod.handgrip_right))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.handgrip_right, test.statistic= "F")
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+
+mod.handgrip_right2 = lmer(scale(log(handgrip_right)) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+anova(mod.handgrip_right, mod.handgrip_right2)
+
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.handgrip_right <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.handgrip_right, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.handgrip_right, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.handgrip_right=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.handgrip_right1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.handgrip_right)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.handgrip_right=df.handgrip_right1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.handgrip_right[,1:4])))
+
+#put activity variables in minutes/day 
+df.handgrip_right1$Sleep=df.handgrip_right1$Sleep*1440 
+df.handgrip_right1$SB=df.handgrip_right1$SB*1440 
+df.handgrip_right1$LPA=df.handgrip_right1$LPA*1440 
+df.handgrip_right1$MVPA=df.handgrip_right1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.handgrip_right[,1])) 
+range.best.sb=range(as.data.frame(best.handgrip_right[,2])) 
+range.best.lpa=range(as.data.frame(best.handgrip_right[,3])) 
+range.best.mvpa=range(as.data.frame(best.handgrip_right[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+handgrip_right.sum=round(sum.sl*1440)
+
+#in minutes
+handgrip_right.sum
+
+#in hours
+round(handgrip_right.sum/60, 1)
+
+######Handgrip_mean#####
+#MODEL FOR FITNESS
+mod.handgrip_mean = lmer(scale(log(Handgrip_mean)) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1)
+summary(mod.handgrip_mean)
+hist(residuals(mod.handgrip_mean))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.handgrip_mean, test.statistic= "F")
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+
+mod.handgrip_mean2 = lmer(scale(log(Handgrip_mean)) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+anova(mod.handgrip_mean, mod.handgrip_mean2)
+
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.handgrip_mean <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.handgrip_mean, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.handgrip_mean, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.handgrip_mean=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.handgrip_mean1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.handgrip_mean)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.handgrip_mean=df.handgrip_mean1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.handgrip_mean[,1:4])))
+
+#put activity variables in minutes/day 
+df.handgrip_mean1$Sleep=df.handgrip_mean1$Sleep*1440 
+df.handgrip_mean1$SB=df.handgrip_mean1$SB*1440 
+df.handgrip_mean1$LPA=df.handgrip_mean1$LPA*1440 
+df.handgrip_mean1$MVPA=df.handgrip_mean1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.handgrip_mean[,1])) 
+range.best.sb=range(as.data.frame(best.handgrip_mean[,2])) 
+range.best.lpa=range(as.data.frame(best.handgrip_mean[,3])) 
+range.best.mvpa=range(as.data.frame(best.handgrip_mean[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+handgrip_mean.sum=round(sum.sl*1440)
+
+#in minutes
+handgrip_mean.sum
+
+#in hours
+round(handgrip_mean.sum/60, 1)
+
+######Nine_hole_left#####
+#MODEL FOR FITNESS#
+mod.nine_hole_left = lmer(scale(log(WHT)) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1)
+summary(mod.nine_hole_left)
+hist(residuals(mod.nine_hole_left))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.nine_hole_left, test.statistic= "F")
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+
+mod.nine_hole_left2 = lmer(scale(log(WHT)) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+anova(mod.nine_hole_left, mod.nine_hole_left2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.nine_hole_left <- as.data.frame(griddata)
+
+# predictions for mod.fat
+predboys <- predict(mod.nine_hole_left, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.nine_hole_left, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.nine_hole_left=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.nine_hole_left1 <- data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.nine_hole_left)
+
+#extract the compositiona associated with the lowest **10**% of predicted bmi
+best.nine_hole_left <- df.nine_hole_left1%>% top_frac(.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b = mean(acomp(best.nine_hole_left[,1:4])))
+
+#put activity variables in minutes/day
+df.nine_hole_left1$Sleep=df.nine_hole_left1$Sleep*1440
+df.nine_hole_left1$SB=df.nine_hole_left1$SB*1440
+df.nine_hole_left1$LPA=df.nine_hole_left1$LPA*1440
+df.nine_hole_left1$MVPA=df.nine_hole_left1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.nine_hole_left[,1])) 
+range.best.sb=range(as.data.frame(best.nine_hole_left[,2])) 
+range.best.lpa=range(as.data.frame(best.nine_hole_left[,3])) 
+range.best.mvpa=range(as.data.frame(best.nine_hole_left[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+nine_hole_left.sum=round(sum.sl*1440)
+
+#in minutes
+nine_hole_left.sum
+
+#in hours
+round(nine_hole_left.sum/60, 1)
+
+######Nine_hole_right#####
+#model for fitness 
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.nine_hole_right = lmer(scale(nine_hole_right) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.nine_hole_right)
+hist(residuals(mod.nine_hole_right))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.nine_hole_right, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.nine_hole_right2 = lmer(scale(nine_hole_right) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.nine_hole_right, mod.nine_hole_right2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.nine_hole_right <- as.data.frame(griddata)
+
+# predictions for mod.fat
+predboys <- predict(mod.nine_hole_right, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.nine_hole_right, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.nine_hole_right=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.nine_hole_right1 <- data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.nine_hole_right)
+
+#extract the compositiona associated with the lowest **10**% of predicted bmi
+best.nine_hole_right <- df.nine_hole_right1%>% top_frac(.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b = mean(acomp(best.nine_hole_right[,1:4])))
+
+#put activity variables in minutes/day
+df.nine_hole_right1$Sleep=df.nine_hole_right1$Sleep*1440
+df.nine_hole_right1$SB=df.nine_hole_right1$SB*1440
+df.nine_hole_right1$LPA=df.nine_hole_right1$LPA*1440
+df.nine_hole_right1$MVPA=df.nine_hole_right1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.nine_hole_right[,1])) 
+range.best.sb=range(as.data.frame(best.nine_hole_right[,2])) 
+range.best.lpa=range(as.data.frame(best.nine_hole_right[,3])) 
+range.best.mvpa=range(as.data.frame(best.nine_hole_right[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+nine_hole_right.sum=round(sum.sl*1440)
+
+#in minutes
+nine_hole_right.sum
+
+#in hours
+round(nine_hole_right.sum/60, 1)
+
+######Zbmi#####
+#MODEL FOR FATNESS#
+mod.ZBMI = lmer(scale(log(ZBMI)) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1)
+summary(mod.ZBMI)
+hist(residuals(mod.ZBMI))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.ZBMI, test.statistic= "F")
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+
+mod.ZBMI2 = lmer(scale(log(ZBMI)) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+anova(mod.ZBMI, mod.ZBMI2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.ZBMI <- as.data.frame(griddata)
+
+# predictions for mod.fat
+predboys <- predict(mod.ZBMI, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.ZBMI, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.ZBMI=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.ZBMI1 <- data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.ZBMI)
+
+#extract the compositiona associated with the lowest **10**% of predicted bmi
+best.ZBMI <- df.ZBMI1%>% top_frac(.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b = mean(acomp(best.ZBMI[,1:4])))
+
+#put activity variables in minutes/day
+df.ZBMI1$Sleep=df.ZBMI1$Sleep*1440
+df.ZBMI1$SB=df.ZBMI1$SB*1440
+df.ZBMI1$LPA=df.ZBMI1$LPA*1440
+df.ZBMI1$MVPA=df.ZBMI1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.ZBMI[,1])) 
+range.best.sb=range(as.data.frame(best.ZBMI[,2])) 
+range.best.lpa=range(as.data.frame(best.ZBMI[,3])) 
+range.best.mvpa=range(as.data.frame(best.ZBMI[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+ZBMI.sum=round(sum.sl*1440)
+
+#in minutes
+ZBMI.sum
+
+#in hours
+round(ZBMI.sum/60, 1)
+
+######Mr.ant#####
+#model for COGNITION (MR.ANT)
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.MrAnt = lmer(scale(MrAnt_Pt) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.MrAnt)
+hist(residuals(mod.MrAnt))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.MrAnt, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.MrAnt2 = lmer(scale(MrAnt_Pt) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.MrAnt, mod.MrAnt2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.MrAnt <- as.data.frame(griddata)
+
+#####Predict cognition values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.MrAnt, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.MrAnt, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.MrAnt=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.MrAnt1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.MrAnt)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.MrAnt=df.MrAnt1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.MrAnt[,1:4])))
+
+#put activity variables in minutes/day 
+df.MrAnt1$Sleep=df.MrAnt1$Sleep*1440 
+df.MrAnt1$SB=df.MrAnt1$SB*1440 
+df.MrAnt1$LPA=df.MrAnt1$LPA*1440 
+df.MrAnt1$MVPA=df.MrAnt1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.MrAnt[,1])) 
+range.best.sb=range(as.data.frame(best.MrAnt[,2])) 
+range.best.lpa=range(as.data.frame(best.MrAnt[,3])) 
+range.best.mvpa=range(as.data.frame(best.MrAnt[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+MrAnt.sum=round(sum.sl*1440)
+
+#in minutes
+MrAnt.sum
+
+#in hours
+round(MrAnt.sum/60, 1)
+
+
+######GoNoGo#####
+#model for COGNITION (MR.ANT)
+#observations are nested in schools, school is a random intercept summary(mod.fit)
+mod.GoNoGo = lmer(scale(ImpulseControl) ~ cbind(ilr1, ilr2, ilr3) + SEX + AGE + SES + (1|school) , data=d1) 
+summary(mod.GoNoGo)
+hist(residuals(mod.GoNoGo))
+
+#composition is a significant predictor of zbmi.
+car::Anova(mod.GoNoGo, test.statistic= "F")
+
+
+#have a look to see if a quadratic term is indicated for the ilrs. Can use the poly(,2) function
+#observations are nested in schools, school is a random intercept
+mod.GoNoGo2 = lmer(scale(ImpulseControl) ~ poly(cbind(ilr1, ilr2, ilr3),2) + SEX + AGE + SES + (1|school) , data=d1)
+
+#compare the two models
+anova(mod.GoNoGo, mod.GoNoGo2)
+
+#(the feasible range of time-use compositions observed within our sample)
+#there are lots of ways of making hypothetical time-use compositions,
+#one way is to create an evenly spaced "grid" of data points, for example
+#to create every possible time-use composition in 10-minute increments.
+
+#I'll start by making a grid that is larger than current min/max time spent in each variable
+
+range(d1$Sleep)
+range(d1$SB)
+range(d1$LPA)
+range(d1$MVPA)
+
+mygrid=rbind( expand.grid( Sleep=seq(min(0), max(920),10),
+                           SB=seq(min(40), max(700), 10), 
+                           LPA=seq(min(0), max(250), 10), 
+                           MVPA=seq(min(0), max(300), 10)))
+
+head(mygrid)
+
+#only keep compositions in this grid that sum to 1440
+mg=subset(mygrid, rowSums(mygrid) == 1440)
+
+#can truncate at +/- 3SD if you want to get rid of outliers in univariate activities
+#get highest/lowest bounds of actvitiy behaviours at +/- 3SD from the sample mean for predictive grid
+MVPA1=pmax(pmin(d1$MVPA, mean(d1$ MVPA)+sd(d1$ MVPA)*3),0) 
+LPA1=pmax(pmin(d1$LPA, mean(d1$LPA)+sd(d1$LPA)*3),mean(d1$LPA)-sd(d1$LPA)*3) 
+SB1=pmax(pmin(d1$SB, mean(d1$SB)+sd(d1$SB)*3),mean(d1$SB)-sd(d1$SB)*3) 
+SL1=pmax(pmin(d1$Sleep, mean(d1$ Sleep)+sd(d1$ Sleep)*3),mean(d1$ Sleep)-sd(d1$ Sleep)*3)
+
+#can use these bounds to trim the predictive grid to values observed in sample
+mg1=subset(mg, mg$Sleep<max(SL1) & mg$Sleep>min(SL1))
+mg2=subset(mg1, mg1$SB<max(SB1) & mg1$SB>min(SB1))
+mg3=subset(mg2, mg2$LPA<max(LPA1) & mg2$LPA>min(LPA1))
+mg4=subset(mg3, mg3$MVPA<max(MVPA1) & mg3$MVPA>min(MVPA1))
+
+#make the grid a compositional object
+griddata=acomp(mg4)
+min(griddata)
+summary(as.data.frame(griddata))
+
+#these are the first few rows of the grid
+head(as.data.frame(griddata))
+nrow(as.data.frame(griddata))
+
+#make ilrs from the griddata. 
+#check for zeros first
+missingSummary(griddata)
+ilr.grid = ilr(griddata)
+
+#can have a look at the predictive grid in 3-D
+install.packages("rgl")
+require(rgl)
+library(rgl)
+
+#produces an interactive plot that you can zoom in, drag around to look at it.
+plot3D(griddata)
+rglwidget()
+
+#these are the actual observed data
+plot3D(acomp(d1$comp))
+rglwidget()
+
+df.GoNoGo <- as.data.frame(griddata)
+
+#####Predict fitness values for all the hypothetical compositions in our griddata
+predboys <- predict(mod.GoNoGo, 
+                    newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                         ilr2 = ilr.grid[, 2], 
+                                         ilr3 = ilr.grid[, 3], 
+                                         SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                         AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                         SEX = rep("1", nrow(griddata))),
+                    re.form = NA)
+
+#then for girls
+predgirls <- predict(mod.GoNoGo, 
+                     newdata = data.frame(ilr1 = ilr.grid[, 1], 
+                                          ilr2 = ilr.grid[, 2], 
+                                          ilr3 = ilr.grid[, 3], 
+                                          SES = rep(mean(d1$SES, na.rm = TRUE), nrow(griddata)), 
+                                          AGE = rep(mean(d1$AGE, na.rm = TRUE), nrow(griddata)), 
+                                          SEX = rep("2", nrow(griddata))),
+                     re.form = NA)
+
+#and then find the average of the two (population has about 50:50 boys:girls) 
+pred.GoNoGo=rowMeans(cbind(predboys, predgirls))
+
+#this makes a dataframe with the predictive grid and the outcome score 
+df.GoNoGo1=data.frame(Sleep=griddata[,1],SB=griddata[,2], LPA=griddata[,3], MVPA=griddata[,4], Predicted_Outcome_Zscore=pred.GoNoGo)
+
+#extract the compositional associated with the lowest **10**% of predicted bmi
+best.GoNoGo=df.GoNoGo1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+
+#this is the centre of the lowest 10%
+(b=mean(acomp(best.GoNoGo[,1:4])))
+
+#put activity variables in minutes/day 
+df.GoNoGo1$Sleep=df.GoNoGo1$Sleep*1440 
+df.GoNoGo1$SB=df.GoNoGo1$SB*1440 
+df.GoNoGo1$LPA=df.GoNoGo1$LPA*1440 
+df.GoNoGo1$MVPA=df.GoNoGo1$MVPA*1440
+
+#get range of best 10%
+range.best.sl=range(as.data.frame(best.GoNoGo[,1])) 
+range.best.sb=range(as.data.frame(best.GoNoGo[,2])) 
+range.best.lpa=range(as.data.frame(best.GoNoGo[,3])) 
+range.best.mvpa=range(as.data.frame(best.GoNoGo[,4]))
+
+#make nice results summary to look like mean (range low:high)
+sum.sl=c(b[1], range.best.sl, b[2], range.best.sb, b[3], range.best.lpa, b[4], range.best.mvpa) 
+GoNoGo.sum=round(sum.sl*1440)
+
+#in minutes
+GoNoGo.sum
+
+#in hours
+round(GoNoGo.sum/60, 1)
+
+```
+
+```{r}
+######BEST VARIABLES#####
+#WHT + GONOGO AND MRANT WE DONT HAVE RESULT#
+best.WHT <- df.WHT1%>% top_frac(.1, Predicted_Outcome_Zscore)
+best.ZBMI <- df.ZBMI1%>% top_frac(.1, Predicted_Outcome_Zscore)
+best.shuttle=df.shuttle1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.standing=df.standing1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.stug=df.stug1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.balance_left=df.balance_left1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.balance_right <- df.balance_right1%>% top_frac(.1, Predicted_Outcome_Zscore)
+best.handgrip_left=df.handgrip_left1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.handgrip_right=df.handgrip_right1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.nine_hole_left <- df.nine_hole_left1%>% top_frac(.1, Predicted_Outcome_Zscore)
+best.nine_hole_right <- df.nine_hole_right1%>% top_frac(.1, Predicted_Outcome_Zscore)
+best.MrAnt=df.MrAnt1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.GoNoGo=df.GoNoGo1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.handgrip_mean=df.handgrip_mean1%>% top_frac(0.1, Predicted_Outcome_Zscore)
+best.balance_mean <- df.balance_mean1%>% top_frac(.1, Predicted_Outcome_Zscore)
+```
+
+```{r}
+######CODA for 3 variables#####
+
+#how much overlap with fitness and fatness best zones?
+ff5 = rbind(best.ZBMI[,1:4], best.balance_mean[,1:4], best.GoNoGo[,1:4])
+
+#which predictive compositions are overlapping (not unique)
+head(ff5)
+
+table(duplicated(ff5))
+
+dups <- ff5 %>% group_by(Sleep, SB, LPA, MVPA) %>% filter(n()>1) %>% ungroup()
+
+# mean of fit and fatness overlapping 
+meanfifa.ZBMI_MrAnt_shuttle <- mean(acomp(dups[,1:4])) %>% 
+  rbind(mean(acomp(dups[,1:4]))) %>%
+  as.data.frame()
+```
+
+```{r}
+# Final plots
+# show where best 10% fitness and fatness overlap (blue)
+plot3D(acomp(dups[,1:4]), cex=2, color="blue", alpha=1)
+rglwidget()
+
+# plot the whole grid of hypothetical compositions
+plot3D(acomp(griddata[,1:4]), cex=2,color="lightgrey", alpha=0.6, add = TRUE)
+rglwidget()
+
+# superimpose the best 10% fatness (tomato)
+plot3D(acomp(best.ZBMI[,1:4]), cex=2, color="tomato", alpha=1, add=TRUE)
+rglwidget()
+
+# superimpose the best 10% fatness (tomato)
+plot3D(acomp(best.MrAnt[,1:4]), cex=2, color="lightgreen", alpha=1, add=TRUE)
+rglwidget()
+
+# superimpose the best 10% fitness (gold)
+plot3D(acomp(best.shuttle[,1:4]), cex=2, color="purple", alpha=1, add=TRUE)
+rglwidget()
+
+# plot centre of best fitness/fatness overlapping area
+plot3D(acomp(meanfifa.ZBMI_MrAnt_shuttle[,1:4]), cex=10,color="black", alpha=1, add=TRUE)
+rglwidget()
+
+print(acomp(meanfifa.ZBMI_MrAnt_shuttle[,1:4]), cex=2,color="black", alpha=1, add=TRUE)
+
+```
+
